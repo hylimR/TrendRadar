@@ -99,3 +99,5 @@ platforms:
     name: "抖音"
   - id: "zhihu"
     name: "知乎"
+  - id: "reddit"
+    name: "Reddit热门"
