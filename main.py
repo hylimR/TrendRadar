@@ -437,6 +437,81 @@ class DataFetcher:
     def __init__(self, proxy_url: Optional[str] = None):
         self.proxy_url = proxy_url
 
+    def fetch_reddit_data(
+        self,
+        id_value: str,
+        alias: str,
+        max_retries: int = 2,
+        min_retry_wait: int = 3,
+        max_retry_wait: int = 5,
+    ) -> Tuple[Optional[str], str, str]:
+        """获取Reddit数据，使用Reddit公开JSON API
+
+        注意：Reddit API对某些服务器IP可能有访问限制，如遇到403错误，
+        建议在config.yaml中启用代理(use_proxy: true)或使用个人环境运行。
+        """
+        # 使用Reddit的/r/all热门榜
+        url = "https://reddit.com/r/all/hot.json?limit=50"
+
+        proxies = None
+        if self.proxy_url:
+            proxies = {"http": self.proxy_url, "https": self.proxy_url}
+
+        # Reddit要求使用描述性User-Agent，格式：<平台>:<应用ID>:<版本> (by /u/<用户名>)
+        headers = {
+            "User-Agent": f"python:TrendRadar:{VERSION} (by /u/TrendRadarBot)",
+            "Accept": "application/json",
+        }
+
+        retries = 0
+        while retries <= max_retries:
+            try:
+                response = requests.get(
+                    url, proxies=proxies, headers=headers, timeout=15
+                )
+                response.raise_for_status()
+
+                reddit_data = response.json()
+
+                # 转换Reddit数据格式为NewsNow格式
+                items = []
+                if "data" in reddit_data and "children" in reddit_data["data"]:
+                    for post in reddit_data["data"]["children"]:
+                        post_data = post.get("data", {})
+                        if post_data.get("stickied", False):
+                            continue  # 跳过置顶帖
+
+                        title = post_data.get("title", "")
+                        url_link = f"https://www.reddit.com{post_data.get('permalink', '')}"
+
+                        items.append({
+                            "title": title,
+                            "url": url_link,
+                            "mobileUrl": url_link
+                        })
+
+                # 构建NewsNow兼容格式
+                newsnow_format = {
+                    "status": "success",
+                    "items": items
+                }
+
+                print(f"获取 {id_value} 成功（Reddit API - {len(items)} 条）")
+                return json.dumps(newsnow_format), id_value, alias
+
+            except Exception as e:
+                retries += 1
+                if retries <= max_retries:
+                    base_wait = random.uniform(min_retry_wait, max_retry_wait)
+                    additional_wait = (retries - 1) * random.uniform(1, 2)
+                    wait_time = base_wait + additional_wait
+                    print(f"请求 {id_value} 失败: {e}. {wait_time:.2f}秒后重试...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"请求 {id_value} 失败: {e}")
+                    return None, id_value, alias
+        return None, id_value, alias
+
     def fetch_data(
         self,
         id_info: Union[str, Tuple[str, str]],
@@ -450,6 +525,10 @@ class DataFetcher:
         else:
             id_value = id_info
             alias = id_value
+
+        # 检查是否为Reddit平台，使用特殊处理
+        if id_value == "reddit":
+            return self.fetch_reddit_data(id_value, alias, max_retries, min_retry_wait, max_retry_wait)
 
         url = f"https://newsnow.busiyi.world/api/s?id={id_value}&latest"
 
